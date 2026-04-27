@@ -100,17 +100,16 @@ Unverified servers always return `0` — no ELO leakage from unaudited sources.
 
 ### Calculate trust scores
 
-The `TrustScore` module computes the trust scores that the `EloRatingService` consumes. 
-While the ELO calculator uses trust scores to weight rating changes, the trust score 
-calculators determine what those scores should be based on server and battle metrics.
+The `TrustScore` module computes trust scores. The easiest way to use it is via
+the `ServerTrust::calculate()` static method:
 
 ```php
-use PvpIndex\BattleValidator\TrustScore\ServerTrustScoreCalculator;
-use PvpIndex\BattleValidator\TrustScore\TrustScoreCalculatorFactory;
+use PvpIndex\BattleValidator\Elo\ServerTrust;
+use PvpIndex\BattleValidator\Elo\EloRatingService;
+use PvpIndex\BattleValidator\Elo\BattleOutcome;
 
-// Calculate server trust score (returns 0.0-1.0)
-$calculator = new ServerTrustScoreCalculator();
-$serverScore = $calculator->calculate([
+// Calculate trust score from server metrics
+$serverTrust = ServerTrust::calculate([
     'uptime_ratio'             => 0.98,
     'validation_success_rate'  => 95.5,
     'player_retention'         => 72.0,
@@ -118,15 +117,26 @@ $serverScore = $calculator->calculate([
     'report_frequency'         => 12.0,
 ]);
 
-// Convert to 0-100 range for ServerTrust DTO
-$trustScoreInt = (int) round($serverScore * 100);
-
-// Use with ELO calculation
-$serverTrust = new ServerTrust(isVerified: true, trustScore: $trustScoreInt);
-$eloDelta = (new EloRatingService())->calculate(1000, 1400, BattleOutcome::WIN, $serverTrust);
+// Use directly with ELO calculation
+$eloDelta = (new EloRatingService())->calculate(
+    playerElo:   1000,
+    opponentElo: 1400,
+    outcome:     BattleOutcome::WIN,
+    server:      $serverTrust,
+);
 ```
 
-Trust scores are normalised to [0.0, 1.0]. Multiply by 100 for the `ServerTrust` DTO.
+For custom weights or advanced usage, use the calculators directly:
+
+```php
+use PvpIndex\BattleValidator\TrustScore\TrustScoreCalculatorFactory;
+
+$calculator = TrustScoreCalculatorFactory::createServer();
+$score = $calculator->calculate($metrics); // Returns 0.0-1.0
+
+$trustScoreInt = (int) round($score * 100); // Convert to 0-100
+$serverTrust = new ServerTrust(isVerified: true, trustScore: $trustScoreInt);
+```
 
 ### Scan for anti-cheat patterns
 

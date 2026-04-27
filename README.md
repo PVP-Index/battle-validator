@@ -18,6 +18,11 @@ exactly how a result becomes a number on the leaderboard.
 | ELO    | `EloRatingService` | The trust-weighted K=32 ELO formula. Pure function of `(playerElo, opponentElo, outcome, ServerTrust)`. |
 | ELO    | `ServerTrust` | Tiny DTO carrying `isVerified` + `trustScore` (0–100). |
 | ELO    | `BattleOutcome` | Enum: `WIN`, `LOSS`, `DRAW`. |
+| TrustScore | `ServerTrustScoreCalculator` | Evaluates server reliability using uptime, validation success rate, player retention, response time, and report frequency. Returns normalised score [0.0, 1.0]. |
+| TrustScore | `BattleTrustScoreCalculator` | Evaluates battle integrity using combat log accuracy, anti-cheat detection, matchmaking fairness, report resolution, and server age. Returns normalised score [0.0, 1.0]. |
+| TrustScore | `CompositeTrustScoreCalculator` | Combines multiple calculators with custom weights for holistic trust evaluation. |
+| TrustScore | `CachedTrustScoreCalculator` | PSR-16 caching decorator with xxHash keys for performance optimisation. |
+| TrustScore | `TrustScoreCalculatorFactory` | Factory for creating calculator instances with default or custom weights. |
 | AntiCheat | `AntiCheatScanner` | Stateless rule engine. Takes a `BattleSnapshot` of recent player history and returns zero or more `Flag`s. |
 | AntiCheat | `BattleSnapshot`, `ParticipantSnapshot`, `RankingChange` | Plain DTOs the scanner consumes. |
 | AntiCheat | `Flag` | A single anti-cheat finding (`rule`, `playerProfileIds`, `details`). |
@@ -40,8 +45,8 @@ that double as a specification. The proprietary code only orchestrates.
 composer require pvpindex/battle-validator
 ```
 
-PHP 8.3+. No runtime dependencies. Framework-agnostic; we use it from
-Laravel but nothing in `src/` imports Laravel.
+PHP 8.3+. Minimal runtime dependencies (PSR-16 for caching). Framework-agnostic;
+we use it from Laravel but nothing in `src/` imports Laravel.
 
 ## Quick examples
 
@@ -93,6 +98,46 @@ $delta = (new EloRatingService())->calculate(
 
 Unverified servers always return `0` — no ELO leakage from unaudited sources.
 
+### Calculate trust scores
+
+```php
+use PvpIndex\BattleValidator\TrustScore\ServerTrustScoreCalculator;
+use PvpIndex\BattleValidator\TrustScore\BattleTrustScoreCalculator;
+use PvpIndex\BattleValidator\TrustScore\TrustScoreCalculatorFactory;
+
+// Server reliability score
+$serverCalculator = new ServerTrustScoreCalculator();
+$serverScore = $serverCalculator->calculate([
+    'uptime_ratio'             => 0.98,
+    'validation_success_rate'  => 95.5,
+    'player_retention'         => 72.0,
+    'response_time'            => 45.0,  // milliseconds
+    'report_frequency'         => 12.0,  // count
+]);
+// $serverScore => 0.8234 (82.34%)
+
+// Battle integrity score
+$battleCalculator = TrustScoreCalculatorFactory::createBattle();
+$battleScore = $battleCalculator->calculate([
+    'combat_log_accuracy'       => 88.5,
+    'anti_cheat_detection_rate' => 76.0,
+    'fair_matchmaking_score'    => 82.0,
+    'player_report_resolution'  => 74.5,
+    'server_age_days'           => 180.0,
+]);
+// $battleScore => 0.7821 (78.21%)
+
+// Composite score (60% server, 40% battle)
+$composite = TrustScoreCalculatorFactory::createComposite([
+    ['calculator' => $serverCalculator, 'weight' => 0.6],
+    ['calculator' => $battleCalculator, 'weight' => 0.4],
+]);
+$finalScore = $composite->calculate(array_merge($serverMetrics, $battleMetrics));
+```
+
+All calculators return normalised scores in [0.0, 1.0]. Multiply by 100 for
+percentage display. Use custom weights to adjust importance of individual metrics.
+
 ### Scan for anti-cheat patterns
 
 ```php
@@ -136,6 +181,68 @@ delta            = round((actual - expected) * 32 * trustMultiplier)
 
 If `isVerified === false`, `delta = 0`.
 
+### Trust score calculation
+
+Trust scores quantify server reliability and battle integrity using weighted
+combinations of normalised metrics. Scores range from 0.0 (poor) to 1.0 (excellent).
+
+#### Server trust metrics
+
+| Metric | Weight | Range | Normalisation |
+|--------|--------|-------|---------------|
+| `uptime_ratio` | 0.25 | 0.0–1.0 | Clamp to [0, 1] |
+| `validation_success_rate` | 0.30 | 0–100% | Sigmoid (midpoint 90%, steepness 0.1) |
+| `player_retention` | 0.20 | 0–100% | Sigmoid (midpoint 60%, steepness 0.08) |
+| `response_time` | 0.15 | milliseconds | Logarithmic, inverted (lower is better) |
+| `report_frequency` | 0.10 | count | Min-max (0–50 reports) |
+
+#### Battle trust metrics
+
+| Metric | Weight | Range | Normalisation |
+|--------|--------|-------|---------------|
+| `combat_log_accuracy` | 0.35 | 0–100% | Sigmoid (midpoint 85%, steepness 0.15) |
+| `anti_cheat_detection_rate` | 0.25 | 0–100% | Linear [0, 100] |
+| `fair_matchmaking_score` | 0.20 | 0–100% | Linear [0, 100] |
+| `player_report_resolution` | 0.15 | 0–100% | Sigmoid (midpoint 70%, steepness 0.1) |
+| `server_age_days` | 0.05 | days | Min-max (30–365 days) |
+
+#### Normalisation methods
+
+- **Min-Max**: Linear scaling `(value - min) / (max - min)`, clamped to [0, 1]
+- **Logarithmic**: `log(value, base)`, useful for metrics with exponential distributions
+- **Sigmoid**: `1 / (1 + exp(-steepness * (value - midpoint)))`, smooth S-curve for thresholds
+
+#### Custom weights
+
+```php
+$calculator = TrustScoreCalculatorFactory::createServer([
+    'uptime_ratio'             => 0.40,
+    'validation_success_rate'  => 0.35,
+    'player_retention'         => 0.15,
+    'response_time'            => 0.05,
+    'report_frequency'         => 0.05,
+]);
+```
+
+Weights must sum to 1.0, otherwise `InvalidArgumentException` is thrown.
+
+#### Caching
+
+```php
+use PvpIndex\BattleValidator\TrustScore\CachedTrustScoreCalculator;
+use Symfony\Component\Cache\Adapter\RedisAdapter;
+use Symfony\Component\Cache\Psr16Cache;
+
+$calculator = new ServerTrustScoreCalculator();
+$cache = new Psr16Cache(new RedisAdapter($redisClient));
+$cached = new CachedTrustScoreCalculator($calculator, $cache, ttl: 3600);
+
+$score = $cached->calculate($metrics);  // Cache miss, calculates
+$score = $cached->calculate($metrics);  // Cache hit, instant return
+```
+
+Cache keys use xxHash128 of canonicalised metrics for collision resistance.
+
 ### Anti-cheat rules
 
 | # | Rule | Trigger |
@@ -156,3 +263,7 @@ composer test
 
 The test suite is the contract. If any of these assertions fail, the
 production pipeline is broken.
+
+## Credits
+
+Trust score calculation system designed and implemented by [GitEpildev](https://github.com/GitEpildev).

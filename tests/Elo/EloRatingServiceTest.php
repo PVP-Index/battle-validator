@@ -54,3 +54,35 @@ it('scales elo deltas down on low-trust servers but never below 10%', function (
     expect($low)->toBeLessThan($high);
     expect($zero)->toBeGreaterThan(0); // floor at 10% so even 0-trust verified earns a tiny amount
 });
+
+it('calculates server trust from metrics via static method', function (): void {
+    $serverTrust = ServerTrust::calculate([
+        'uptime_ratio'             => 0.98,
+        'validation_success_rate'  => 95.5,
+        'player_retention'         => 72.0,
+        'response_time'            => 45.0,
+        'report_frequency'         => 12.0,
+    ]);
+
+    expect($serverTrust)->toBeInstanceOf(ServerTrust::class)
+        ->and($serverTrust->isVerified)->toBeTrue()
+        ->and($serverTrust->trustScore)->toBeInt()
+        ->and($serverTrust->trustScore)->toBeGreaterThanOrEqual(0)
+        ->and($serverTrust->trustScore)->toBeLessThanOrEqual(100);
+});
+
+it('integrates trust score calculation with elo service', function (): void {
+    $serverTrust = ServerTrust::calculate([
+        'uptime_ratio'             => 0.95,
+        'validation_success_rate'  => 92.0,
+        'player_retention'         => 68.0,
+        'response_time'            => 50.0,
+        'report_frequency'         => 12.0,
+    ]);
+
+    $service = new EloRatingService();
+    $delta = $service->calculate(1000, 1400, BattleOutcome::WIN, $serverTrust);
+
+    expect($delta)->toBeInt()
+        ->and($delta)->toBeGreaterThan(0);
+});

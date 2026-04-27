@@ -100,43 +100,33 @@ Unverified servers always return `0` — no ELO leakage from unaudited sources.
 
 ### Calculate trust scores
 
+The `TrustScore` module computes the trust scores that the `EloRatingService` consumes. 
+While the ELO calculator uses trust scores to weight rating changes, the trust score 
+calculators determine what those scores should be based on server and battle metrics.
+
 ```php
 use PvpIndex\BattleValidator\TrustScore\ServerTrustScoreCalculator;
-use PvpIndex\BattleValidator\TrustScore\BattleTrustScoreCalculator;
 use PvpIndex\BattleValidator\TrustScore\TrustScoreCalculatorFactory;
 
-// Server reliability score
-$serverCalculator = new ServerTrustScoreCalculator();
-$serverScore = $serverCalculator->calculate([
+// Calculate server trust score (returns 0.0-1.0)
+$calculator = new ServerTrustScoreCalculator();
+$serverScore = $calculator->calculate([
     'uptime_ratio'             => 0.98,
     'validation_success_rate'  => 95.5,
     'player_retention'         => 72.0,
-    'response_time'            => 45.0,  // milliseconds
-    'report_frequency'         => 12.0,  // count
+    'response_time'            => 45.0,
+    'report_frequency'         => 12.0,
 ]);
-// $serverScore => 0.8234 (82.34%)
 
-// Battle integrity score
-$battleCalculator = TrustScoreCalculatorFactory::createBattle();
-$battleScore = $battleCalculator->calculate([
-    'combat_log_accuracy'       => 88.5,
-    'anti_cheat_detection_rate' => 76.0,
-    'fair_matchmaking_score'    => 82.0,
-    'player_report_resolution'  => 74.5,
-    'server_age_days'           => 180.0,
-]);
-// $battleScore => 0.7821 (78.21%)
+// Convert to 0-100 range for ServerTrust DTO
+$trustScoreInt = (int) round($serverScore * 100);
 
-// Composite score (60% server, 40% battle)
-$composite = TrustScoreCalculatorFactory::createComposite([
-    ['calculator' => $serverCalculator, 'weight' => 0.6],
-    ['calculator' => $battleCalculator, 'weight' => 0.4],
-]);
-$finalScore = $composite->calculate(array_merge($serverMetrics, $battleMetrics));
+// Use with ELO calculation
+$serverTrust = new ServerTrust(isVerified: true, trustScore: $trustScoreInt);
+$eloDelta = (new EloRatingService())->calculate(1000, 1400, BattleOutcome::WIN, $serverTrust);
 ```
 
-All calculators return normalised scores in [0.0, 1.0]. Multiply by 100 for
-percentage display. Use custom weights to adjust importance of individual metrics.
+Trust scores are normalised to [0.0, 1.0]. Multiply by 100 for the `ServerTrust` DTO.
 
 ### Scan for anti-cheat patterns
 
@@ -184,7 +174,11 @@ If `isVerified === false`, `delta = 0`.
 ### Trust score calculation
 
 Trust scores quantify server reliability and battle integrity using weighted
-combinations of normalised metrics. Scores range from 0.0 (poor) to 1.0 (excellent).
+combinations of normalised metrics. These scores feed into the `ServerTrust` DTO
+consumed by `EloRatingService`.
+
+**Purpose**: The trust score calculators determine HOW trust scores are computed.  
+**Integration**: ELO calculations use these scores to weight rating changes.
 
 #### Server trust metrics
 
@@ -216,7 +210,7 @@ combinations of normalised metrics. Scores range from 0.0 (poor) to 1.0 (excelle
 
 ```php
 $calculator = TrustScoreCalculatorFactory::createServer([
-    'uptime_ratio'             => 0.40,
+    'uptime_ratio'             => 0.40,  // Emphasise uptime
     'validation_success_rate'  => 0.35,
     'player_retention'         => 0.15,
     'response_time'            => 0.05,
@@ -225,23 +219,6 @@ $calculator = TrustScoreCalculatorFactory::createServer([
 ```
 
 Weights must sum to 1.0, otherwise `InvalidArgumentException` is thrown.
-
-#### Caching
-
-```php
-use PvpIndex\BattleValidator\TrustScore\CachedTrustScoreCalculator;
-use Symfony\Component\Cache\Adapter\RedisAdapter;
-use Symfony\Component\Cache\Psr16Cache;
-
-$calculator = new ServerTrustScoreCalculator();
-$cache = new Psr16Cache(new RedisAdapter($redisClient));
-$cached = new CachedTrustScoreCalculator($calculator, $cache, ttl: 3600);
-
-$score = $cached->calculate($metrics);  // Cache miss, calculates
-$score = $cached->calculate($metrics);  // Cache hit, instant return
-```
-
-Cache keys use xxHash128 of canonicalised metrics for collision resistance.
 
 ### Anti-cheat rules
 

@@ -250,7 +250,3 @@ composer test
 
 The test suite is the contract. If any of these assertions fail, the
 production pipeline is broken.
-
-## Credits
-
-Trust score calculation system designed and implemented by [GitEpildev](https://github.com/GitEpildev).

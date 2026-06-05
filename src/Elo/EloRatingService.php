@@ -7,7 +7,7 @@ namespace PvpIndex\BattleValidator\Elo;
 /**
  * Trust-weighted K=32 ELO formula.
  *
- * Pure function — no globals, no I/O, no time, no randomness. Given the
+ * Pure function - no globals, no I/O, no time, no randomness. Given the
  * same arguments it will always return the same integer delta.
  *
  *     expected   = 1 / (1 + 10 ^ ((opponentElo - playerElo) / 400))
@@ -15,7 +15,7 @@ namespace PvpIndex\BattleValidator\Elo;
  *     trustMul   = clamp(trustScore / 100, 0.1, 1.0)
  *     delta      = round((actual - expected) * 32 * trustMul)
  *
- * Unverified servers always produce 0 — no leakage from unaudited sources.
+ * Unverified servers always produce 0 - no leakage from unaudited sources.
  */
 final class EloRatingService
 {
@@ -36,9 +36,10 @@ final class EloRatingService
         $expected = 1 / (1 + 10 ** (($opponentElo - $playerElo) / 400));
 
         $actual = match ($outcome) {
-            BattleOutcome::WIN  => 1.0,
-            BattleOutcome::DRAW => 0.5,
-            BattleOutcome::LOSS => 0.0,
+            BattleOutcome::WIN       => 1.0,
+            BattleOutcome::DRAW      => 0.5,
+            BattleOutcome::LOSS,
+            BattleOutcome::SURRENDER => 0.0,
         };
 
         $trustMultiplier = max(

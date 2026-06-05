@@ -12,7 +12,8 @@ namespace PvpIndex\BattleValidator\Elo;
  */
 enum BattleOutcome: string
 {
-    case WIN  = 'win';
-    case LOSS = 'loss';
-    case DRAW = 'draw';
+    case WIN      = 'win';
+    case LOSS     = 'loss';
+    case DRAW     = 'draw';
+    case SURRENDER = 'surrender';
 }

@@ -8,16 +8,16 @@ use PvpIndex\BattleValidator\Elo\BattleOutcome;
 
 /**
  * Pure rule engine. Given a {@see BattleSnapshot} it returns a list of
- * {@see Flag}s — one per rule that matched. No I/O, no globals, no
+ * {@see Flag}s - one per rule that matched. No I/O, no globals, no
  * randomness.
  *
  * Rules implemented:
  *
- *   1. elo_ping_pong     — same two players appeared together in ≥ 3 of
+ *   1. elo_ping_pong     - same two players appeared together in ≥ 3 of
  *                          either player's last 10 battles (collusion).
- *   2. loss_farming      — the losing player has had Δ < -25 in ≥ 3 of
+ *   2. loss_farming      - the losing player has had Δ < -25 in ≥ 3 of
  *                          their last 10 ranked battles.
- *   3. metadata_outlier  — a numeric metadata field is > 3× the median of
+ *   3. metadata_outlier  - a numeric metadata field is > 3× the median of
  *                          the player's last 10 same-mode battles
  *                          (≥ 5 samples required).
  */
@@ -37,7 +37,7 @@ final class AntiCheatScanner
         $flags = [];
 
         foreach ([$snapshot->participantA, $snapshot->participantB] as $participant) {
-            if ($participant->outcome === BattleOutcome::LOSS) {
+            if ($participant->outcome === BattleOutcome::LOSS || $participant->outcome === BattleOutcome::SURRENDER) {
                 $flag = $this->detectLossFarming($participant);
                 if ($flag !== null) {
                     $flags[] = $flag;
